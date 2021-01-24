@@ -7,6 +7,9 @@
 #include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
 
+// Post to InfluxDB
+#include <ESP8266HTTPClient.h>
+
 #include <WiFiManager.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
@@ -27,6 +30,16 @@
 ESP8266WebServer web_server(WEBSERVER_PORT);
 
 ESP8266HTTPUpdateServer esp_updater;
+
+// Post to InfluxDB
+WiFiClient client;
+HTTPClient http;
+int influx_status = 0;
+
+const uint32_t ok_interval = 5000;
+const uint32_t err_interval = 1000;
+
+uint32_t breathe_interval = ok_interval; // ms for one led breathe cycle
 
 WiFiUDP ntpUDP;
 NTPClient ntp(ntpUDP, NTP_SERVER);
@@ -58,6 +71,29 @@ ICACHE_RAM_ATTR void event()
 {
   counter_events++;
 }
+
+
+// Post data to InfluxDB
+void post_data() {
+  static const char uri[]="/write?db=" INFLUX_DB "&precision=s";
+
+  char fmt[] = "events,dev=" HOSTNAME ",ver=%s count_5s=%u,cpm=%u\n";
+  char msg[sizeof(fmt) + 20 + 2 * 10];
+  snprintf(msg, sizeof(msg), fmt, VERSION, events.raw.last_5s, events.cpm.last_1m);
+  http.begin(client, INFLUX_SERVER, INFLUX_PORT, uri);
+  http.setUserAgent(PROGNAME);
+  influx_status = http.POST(msg);
+  String payload = http.getString();
+  http.end();
+  if( influx_status < 200 || influx_status > 299 ) {
+    breathe_interval = err_interval;
+    syslog.logf(LOG_ERR, "Post %s:%d%s status %d response '%s'", INFLUX_SERVER, INFLUX_PORT, uri, influx_status, payload.c_str());
+  }
+  else {
+    breathe_interval = ok_interval;
+  };
+}
+
 
 // Define web pages for update, reset or for event infos
 void setup_webserver()
@@ -106,25 +142,30 @@ void setup_webserver()
   });
 
   // Standard page
-  static char page[] = "<html>\n"
-                       " <head><title>" PROGNAME " v" VERSION "</title></head>\n"
-                       " <body>\n"
-                       "  <h1> " PROGNAME " v" VERSION "</h1>\n"
-                       "  <table><tr>\n"
-                       "   <td><form action=\"events\" method=\"post\"><input type=\"submit\" name=\"events\" value=\"Events as JSON\" /></form></td>\n"
-                       "   <td><form action=\"reset\" method=\"post\"><input type=\"submit\" name=\"reset\" value=\"Reset\" /></form></td>\n"
-                       "  </tr></table>\n"
-                       "  Post firmware image to /update\n"
-                       " </body>\n"
-                       "</html>\n";
+  static const char fmt[] =
+    "<html>\n"
+    " <head><title>" PROGNAME " v" VERSION "</title></head>\n"
+    " <body>\n"
+    "  <h1> " PROGNAME " v" VERSION "</h1>\n"
+    "  <table><tr>\n"
+    "   <td><form action=\"events\" method=\"post\"><input type=\"submit\" name=\"events\" value=\"Events as JSON\" /></form></td>\n"
+    "   <td><form action=\"reset\" method=\"post\"><input type=\"submit\" name=\"reset\" value=\"Reset\" /></form></td>\n"
+    "  </tr></table>\n"
+    "  <div>Post firmware image to /update\n<div>"
+    "  <div>Influx status: %d\n<div>"
+    " </body>\n"
+    "</html>\n";
+  static char page[sizeof(fmt) + 10] = "";
 
   // Index page
   web_server.on("/", []() {
+    snprintf(page, sizeof(page), fmt, influx_status);
     web_server.send(200, "text/html", page);
   });
 
   // Catch all page, gives a hint on valid URLs
   web_server.onNotFound([]() {
+    snprintf(page, sizeof(page), fmt, influx_status);
     web_server.send(404, "text/html", page);
   });
 
@@ -136,8 +177,8 @@ void setup_webserver()
 
 
 void setup() {
-  WiFi.hostname(HOSTNAME);
   WiFi.mode(WIFI_STA);
+  WiFi.hostname(HOSTNAME);
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LED_ON);
@@ -296,6 +337,8 @@ void on_interval_elapsed( uint32_t interval, uint32_t counts ) {
     }
   }
 
+  post_data();
+
   syslog.logf(LOG_INFO, "Events CPM: 5s=%2u,  1m=%2u,  10m=%2u,  1h=%2u,  1d=%2u,  RAW: 5s=%2u,  1m=%2u,  10m=%3u,  1h=%4u,  1d=%5u",
               events.cpm.last_5s, events.cpm.last_1m, events.cpm.last_10m, events.cpm.last_1h, events.cpm.last_1d,
               events.raw.last_5s, events.raw.last_1m, events.raw.last_10m, events.raw.last_1h, events.raw.last_1d);
@@ -319,19 +362,18 @@ void check_events() {
 
 
 void breathe() {
-  static const uint32_t interval = 4000;   // ms for one cycle
   static uint32_t start = 0;
   static uint32_t max_duty = PWMRANGE / 2; // max brightness
   static uint32_t prev_duty = 0;
 
   uint32_t now = millis();
   uint32_t elapsed = now - start;
-  if( elapsed > interval ) {
+  if( elapsed > breathe_interval ) {
     start = now;
-    elapsed -= interval;
+    elapsed -= breathe_interval;
   }
   
-  uint32_t duty = max_duty * elapsed * 2 / interval;
+  uint32_t duty = max_duty * elapsed * 2 / breathe_interval;
   if( duty > max_duty ) {
     duty = 2 * max_duty - duty;
   }
