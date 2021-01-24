@@ -10,6 +10,10 @@
 
 #define IRQ_PIN D2
 
+#define IDLE_CPM 25
+
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof(*(a)))
+
 
 WiFiUDP ntpUDP;
 NTPClient ntp(ntpUDP);
@@ -61,7 +65,7 @@ void setup() {
 
   digitalWrite(LED_BUILTIN, LED_ON);
   char msg[80];
-  snprintf(msg, sizeof(msg), "WLAN IP is %s", WiFi.localIP().toString().c_str());
+  snprintf(msg, sizeof(msg), "Version %s, WLAN IP is %s", VERSION, WiFi.localIP().toString().c_str());
   Serial.printf(msg);
   syslog.logf(LOG_NOTICE, msg);
 
@@ -82,8 +86,110 @@ bool check_ntptime() {
 }
 
 
-void on_interval_elapsed( uint32_t elapsed, uint32_t events ) {
-  syslog.logf(LOG_INFO, "%u events in %u ms", events, elapsed);
+uint32_t sum( uint32_t *values, size_t size ) {
+  uint32_t sum = 0;
+  while( size-- ) {
+    sum += *values;
+    values++;
+  }
+  return sum;
+}
+
+
+void fix_cpm( uint32_t &cpm ) {
+  cpm = (cpm > IDLE_CPM) ? cpm - IDLE_CPM : 0;
+}
+
+
+void on_interval_elapsed( uint32_t interval, uint32_t events ) {
+  static uint32_t minute_events[12];
+  static uint32_t minute_cpm = 0;
+  static size_t minute_event = 0;
+  static bool minute_valid = false;
+  static uint32_t ten_minute_events[10];
+  static uint32_t ten_minute_cpm = 0;
+  static size_t ten_minute_event = 0;
+  static bool ten_minute_valid = false;
+  static uint32_t hour_events[6];
+  static uint32_t hour_cpm = 0;
+  static size_t hour_event = 0;
+  static bool hour_valid = false;
+  static uint32_t day_events[24];
+  static uint32_t day_cpm = 0;
+  static size_t day_event = 0;
+  static bool day_valid = false;
+
+  uint32_t cpm = (uint32_t)((uint64_t)events * 60000 / interval);
+  fix_cpm(cpm);
+
+  if (minute_valid == false && minute_event == 0)
+  {
+    for( size_t i = 0; i < ARRAY_SIZE(minute_events); i++ ) {
+      minute_events[i] = events;
+    }
+    minute_cpm = minute_events[0] * ARRAY_SIZE(minute_events);
+    fix_cpm(minute_cpm);
+
+    for( size_t i = 0; i < ARRAY_SIZE(ten_minute_events); i++ ) {
+      ten_minute_events[i] = minute_events[0] * ARRAY_SIZE(minute_events);
+    }
+    ten_minute_cpm = ten_minute_events[0] * ARRAY_SIZE(ten_minute_events) / 10;
+    fix_cpm(ten_minute_cpm);
+
+    for( size_t i = 0; i < ARRAY_SIZE(hour_events); i++ ) {
+      hour_events[i] = ten_minute_events[0] * ARRAY_SIZE(ten_minute_events);
+    }
+    hour_cpm = hour_events[0] * ARRAY_SIZE(hour_events) / 60;
+    fix_cpm(hour_cpm);
+
+    for( size_t i = 0; i < ARRAY_SIZE(day_events); i++ ) {
+      day_events[i] = hour_events[0] * ARRAY_SIZE(hour_events);
+    }
+    day_cpm = day_events[0] * ARRAY_SIZE(day_events) / (24 * 60);
+    fix_cpm(day_cpm);
+
+    minute_event = 1;
+  }
+  else {
+    minute_events[minute_event] = events;
+    minute_cpm = sum(minute_events, ARRAY_SIZE(minute_events));
+    fix_cpm(minute_cpm);
+    minute_event++;
+    if( minute_event == ARRAY_SIZE(minute_events) ) {
+      minute_event = 0;
+      minute_valid = true;
+
+      ten_minute_events[ten_minute_event] = sum(minute_events, ARRAY_SIZE(minute_events));
+      ten_minute_cpm = (sum(ten_minute_events, ARRAY_SIZE(ten_minute_events)) + 5) / 10;
+      fix_cpm(ten_minute_cpm);
+      ten_minute_event++;
+      if( ten_minute_event == ARRAY_SIZE(ten_minute_events) ) {
+        ten_minute_event = 0;
+        ten_minute_valid = true;
+
+        hour_events[hour_event] = sum(ten_minute_events, ARRAY_SIZE(ten_minute_events));
+        hour_cpm = (sum(hour_events, ARRAY_SIZE(hour_events)) + 30) / 60;
+        fix_cpm(hour_cpm);
+        hour_event++;
+        if(hour_event == ARRAY_SIZE(hour_events) ) {
+          hour_event = 0;
+          hour_valid = true;
+
+          day_events[day_event] = sum(hour_events, ARRAY_SIZE(hour_events));
+          day_cpm = (sum(day_events, ARRAY_SIZE(day_events)) + 12 * 60) / (24 * 60);
+          fix_cpm(day_cpm);
+          day_event++;
+          if( day_event == ARRAY_SIZE(day_events) ) {
+            day_event = 0;
+            day_valid = true;
+          }
+        }
+      }
+    }
+  }
+
+  syslog.logf(LOG_INFO, "%u events in %u ms => cpm curr=%u, min=%u, 10min=%u, hour=%u, day=%u",
+              events, interval, cpm, minute_cpm, ten_minute_cpm, hour_cpm, day_cpm);
 }
 
 
@@ -98,9 +204,9 @@ void check_events()
     uint32_t events = counter_events;
 
     counter_events = 0;
-    last_counter_reset = now;
+    last_counter_reset += counter_interval;
 
-    on_interval_elapsed(elapsed, events);
+    on_interval_elapsed(counter_interval, events);
   }
 }
 
