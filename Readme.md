@@ -2,12 +2,21 @@
 
 firmware for ESP8266 to count radiation events with a geiger-müller-counter
 
+![RadiationD-v1.1 Board with D1mini Mount](data/Board_photo_20210125_131850.jpg "RadiationD with D1mini")
+
+Inspired by [Andreas Spiess](https://www.youtube.com/watch?v=K28Az3-gV7E). Part cost for me was <30€ (ESP8266 D1mini, RadiationD board, USB cable) 
+
 ## Hardware
-Connect RadiationD-v1.1 (CAJOE) header P3-Gnd with ESP-Gnd, P3-5V with ESP-5V and P3-Vin with ESP-D2
+Connect RadiationD-v1.1 (CAJOE) header 
+| P3  | ESP |
+|-----|-----|
+| Gnd | Gnd |
+| 5V  | 5V  |
+| Vin | D2  |
 
 Note: P3-Vin has 3.3V level on my board. Ideal for ESP8266, no level shifter needed. Strange pin name, but it really is the interrupt line (falling edge).
 
-STL for 3d-printing a support for a D1mini will follow soon.
+STL file for 3D-printing the D1mini mount (and already generated GCode for my Anycubic Kossel Pulley) is in the data/ subdirectory.
 
 ## Database
 Connect to InfluxDB is easy: modify influx server and port in platformio.ini and create the database on the server:
@@ -16,3 +25,5 @@ Connect to InfluxDB is easy: modify influx server and port in platformio.ini and
     Connected to http://localhost:8086 version 1.8.0
     InfluxDB shell version: 1.8.0
     > create database Radieschen
+
+![Grafana dashboard](data/Grafana-Screenshot_20210125_141927.jpg "Grafana dashboard")
