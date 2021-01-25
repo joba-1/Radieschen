@@ -1,19 +1,20 @@
 #include <Arduino.h>
 
 // Web Updater
-#include <ESP8266WiFi.h>
-#include <WiFiClient.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
 #include <ESP8266HTTPUpdateServer.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
+#include <WiFiClient.h>
 
 // Post to InfluxDB
 #include <ESP8266HTTPClient.h>
 
-#include <WiFiManager.h>
+// Infrastructure
 #include <NTPClient.h>
-#include <WiFiUdp.h>
 #include <Syslog.h>
+#include <WiFiManager.h>
+#include <WiFiUdp.h>
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(*(a)))
 
@@ -25,7 +26,6 @@
 #define IDLE_CPM 25
 
 #define WEBSERVER_PORT 80
-
 
 ESP8266WebServer web_server(WEBSERVER_PORT);
 
@@ -56,48 +56,42 @@ typedef struct counts {
   uint32_t last_1d;
 } counts_t;
 
-typedef struct events
-{
+typedef struct events {
   time_t measured;
   counts_t raw; // raw events
   counts_t cpm; // events per minute without idle average
 } events_t;
 
-events_t events = {0};                 // last measurement
-uint32_t last_counter_reset = 0;       // millis() of last counter reset
-volatile uint32_t counter_events = 0;  // events of current interval so far
+events_t events = {0};                // last measurement
+uint32_t last_counter_reset = 0;      // millis() of last counter reset
+volatile uint32_t counter_events = 0; // events of current interval so far
 
-ICACHE_RAM_ATTR void event()
-{
-  counter_events++;
-}
-
+ICACHE_RAM_ATTR void event() { counter_events++; }
 
 // Post data to InfluxDB
 void post_data() {
-  static const char uri[]="/write?db=" INFLUX_DB "&precision=s";
+  static const char uri[] = "/write?db=" INFLUX_DB "&precision=s";
 
   char fmt[] = "events,dev=" HOSTNAME ",ver=%s count_5s=%u,cpm=%u\n";
   char msg[sizeof(fmt) + 20 + 2 * 10];
-  snprintf(msg, sizeof(msg), fmt, VERSION, events.raw.last_5s, events.cpm.last_1m);
+  snprintf(msg, sizeof(msg), fmt, VERSION, events.raw.last_5s,
+           events.cpm.last_1m);
   http.begin(client, INFLUX_SERVER, INFLUX_PORT, uri);
   http.setUserAgent(PROGNAME);
   influx_status = http.POST(msg);
   String payload = http.getString();
   http.end();
-  if( influx_status < 200 || influx_status > 299 ) {
+  if (influx_status < 200 || influx_status > 299) {
     breathe_interval = err_interval;
-    syslog.logf(LOG_ERR, "Post %s:%d%s status %d response '%s'", INFLUX_SERVER, INFLUX_PORT, uri, influx_status, payload.c_str());
-  }
-  else {
+    syslog.logf(LOG_ERR, "Post %s:%d%s status %d response '%s'", INFLUX_SERVER,
+                INFLUX_PORT, uri, influx_status, payload.c_str());
+  } else {
     breathe_interval = ok_interval;
   };
 }
 
-
 // Define web pages for update, reset or for event infos
-void setup_webserver()
-{
+void setup_webserver() {
   web_server.on("/events", HTTP_POST, []() {
     static const char fmt[] = "{\n"
                               " \"meta\": {\n"
@@ -128,9 +122,11 @@ void setup_webserver()
     time_t now = time(NULL);
     strftime(iso_time, sizeof(iso_time), "%FT%T%Z", localtime(&now));
     snprintf(msg, sizeof(msg), fmt, IDLE_CPM, start_time, iso_time,
-             events.raw.last_5s, events.raw.last_1m, events.raw.last_10m, events.raw.last_1h, events.raw.last_1d,
-             events.cpm.last_5s, events.cpm.last_1m, events.cpm.last_10m, events.cpm.last_1h, events.cpm.last_1d);
-      web_server.send(200, "application/json", msg);
+             events.raw.last_5s, events.raw.last_1m, events.raw.last_10m,
+             events.raw.last_1h, events.raw.last_1d, events.cpm.last_5s,
+             events.cpm.last_1m, events.cpm.last_10m, events.cpm.last_1h,
+             events.cpm.last_1d);
+    web_server.send(200, "application/json", msg);
   });
 
   // Call this page to reset the ESP
@@ -143,18 +139,20 @@ void setup_webserver()
 
   // Standard page
   static const char fmt[] =
-    "<html>\n"
-    " <head><title>" PROGNAME " v" VERSION "</title></head>\n"
-    " <body>\n"
-    "  <h1> " PROGNAME " v" VERSION "</h1>\n"
-    "  <table><tr>\n"
-    "   <td><form action=\"events\" method=\"post\"><input type=\"submit\" name=\"events\" value=\"Events as JSON\" /></form></td>\n"
-    "   <td><form action=\"reset\" method=\"post\"><input type=\"submit\" name=\"reset\" value=\"Reset\" /></form></td>\n"
-    "  </tr></table>\n"
-    "  <div>Post firmware image to /update\n<div>"
-    "  <div>Influx status: %d\n<div>"
-    " </body>\n"
-    "</html>\n";
+      "<html>\n"
+      " <head><title>" PROGNAME " v" VERSION "</title></head>\n"
+      " <body>\n"
+      "  <h1> " PROGNAME " v" VERSION "</h1>\n"
+      "  <table><tr>\n"
+      "   <td><form action=\"events\" method=\"post\"><input type=\"submit\" "
+      "name=\"events\" value=\"Events as JSON\" /></form></td>\n"
+      "   <td><form action=\"reset\" method=\"post\"><input type=\"submit\" "
+      "name=\"reset\" value=\"Reset\" /></form></td>\n"
+      "  </tr></table>\n"
+      "  <div>Post firmware image to /update\n<div>"
+      "  <div>Influx status: %d\n<div>"
+      " </body>\n"
+      "</html>\n";
   static char page[sizeof(fmt) + 10] = "";
 
   // Index page
@@ -174,7 +172,6 @@ void setup_webserver()
   MDNS.addService("http", "tcp", WEBSERVER_PORT);
   syslog.logf(LOG_NOTICE, "Serving HTTP on port %d", WEBSERVER_PORT);
 }
-
 
 void setup() {
   WiFi.mode(WIFI_STA);
@@ -196,22 +193,24 @@ void setup() {
   digitalWrite(LED_BUILTIN, LED_OFF);
 
   WiFiManager wm;
-  //wm.resetSettings();
-  if( ! wm.autoConnect() ) {
+  // wm.resetSettings();
+  if (!wm.autoConnect()) {
     Serial.println("Failed to connect WLAN");
-    for( int i = 0; i < 1000; i+= 200 ) {
+    for (int i = 0; i < 1000; i += 200) {
       digitalWrite(LED_BUILTIN, LED_ON);
       delay(100);
       digitalWrite(LED_BUILTIN, LED_OFF);
       delay(100);
     }
     ESP.restart();
-    while(true);
+    while (true)
+      ;
   }
 
   digitalWrite(LED_BUILTIN, LED_ON);
   char msg[80];
-  snprintf(msg, sizeof(msg), "%s Version %s, WLAN IP is %s", PROGNAME, VERSION, WiFi.localIP().toString().c_str());
+  snprintf(msg, sizeof(msg), "%s Version %s, WLAN IP is %s", PROGNAME, VERSION,
+           WiFi.localIP().toString().c_str());
   Serial.printf(msg);
   syslog.logf(LOG_NOTICE, msg);
 
@@ -226,10 +225,9 @@ void setup() {
   attachInterrupt(digitalPinToInterrupt(D2), event, FALLING);
 }
 
-
 bool check_ntptime() {
   static bool have_time = false;
-  if( !have_time && ntp.getEpochTime() ) {
+  if (!have_time && ntp.getEpochTime()) {
     have_time = true;
     time_t now = time(NULL);
     strftime(start_time, sizeof(start_time), "%FT%T%Z", localtime(&now));
@@ -238,23 +236,18 @@ bool check_ntptime() {
   return have_time;
 }
 
-
-uint32_t sum( uint32_t *values, size_t size ) {
+uint32_t sum(uint32_t *values, size_t size) {
   uint32_t sum = 0;
-  while( size-- ) {
+  while (size--) {
     sum += *values;
     values++;
   }
   return sum;
 }
 
+void fix_cpm(uint32_t &cpm) { cpm = (cpm > IDLE_CPM) ? cpm - IDLE_CPM : 0; }
 
-void fix_cpm( uint32_t &cpm ) {
-  cpm = (cpm > IDLE_CPM) ? cpm - IDLE_CPM : 0;
-}
-
-
-void on_interval_elapsed( uint32_t interval, uint32_t counts ) {
+void on_interval_elapsed(uint32_t interval, uint32_t counts) {
   static bool first = true;
   static uint32_t minute_events[12];
   static size_t minute_event = 0;
@@ -270,30 +263,30 @@ void on_interval_elapsed( uint32_t interval, uint32_t counts ) {
   events.cpm.last_5s = (uint32_t)((uint64_t)counts * 60000 / interval);
   fix_cpm(events.cpm.last_5s);
 
-  if( first ) {
+  if (first) {
     first = false;
-    for( size_t i = 0; i < ARRAY_SIZE(minute_events); i++ ) {
+    for (size_t i = 0; i < ARRAY_SIZE(minute_events); i++) {
       minute_events[i] = counts;
     }
     events.raw.last_1m = minute_events[0] * ARRAY_SIZE(minute_events);
     events.cpm.last_1m = events.raw.last_1m;
     fix_cpm(events.cpm.last_1m);
 
-    for( size_t i = 0; i < ARRAY_SIZE(ten_minute_events); i++ ) {
+    for (size_t i = 0; i < ARRAY_SIZE(ten_minute_events); i++) {
       ten_minute_events[i] = minute_events[0] * ARRAY_SIZE(minute_events);
     }
     events.raw.last_10m = ten_minute_events[0] * ARRAY_SIZE(ten_minute_events);
     events.cpm.last_10m = events.raw.last_10m / 10;
     fix_cpm(events.cpm.last_10m);
 
-    for( size_t i = 0; i < ARRAY_SIZE(hour_events); i++ ) {
+    for (size_t i = 0; i < ARRAY_SIZE(hour_events); i++) {
       hour_events[i] = ten_minute_events[0] * ARRAY_SIZE(ten_minute_events);
     }
     events.raw.last_1h = hour_events[0] * ARRAY_SIZE(hour_events);
     events.cpm.last_1h = events.raw.last_1h / 60;
     fix_cpm(events.cpm.last_1h);
 
-    for( size_t i = 0; i < ARRAY_SIZE(day_events); i++ ) {
+    for (size_t i = 0; i < ARRAY_SIZE(day_events); i++) {
       day_events[i] = hour_events[0] * ARRAY_SIZE(hour_events);
     }
     events.raw.last_1d = day_events[0] * ARRAY_SIZE(day_events);
@@ -301,35 +294,37 @@ void on_interval_elapsed( uint32_t interval, uint32_t counts ) {
     fix_cpm(events.cpm.last_1d);
 
     minute_event = 1;
-  }
-  else {
+  } else {
     minute_events[minute_event] = counts;
     events.raw.last_1m = sum(minute_events, ARRAY_SIZE(minute_events));
     events.cpm.last_1m = events.raw.last_1m;
     fix_cpm(events.raw.last_1m);
     minute_event++;
-    if( minute_event == ARRAY_SIZE(minute_events) ) {
+    if (minute_event == ARRAY_SIZE(minute_events)) {
       minute_event = 0;
-      ten_minute_events[ten_minute_event] = sum(minute_events, ARRAY_SIZE(minute_events));
-      events.raw.last_10m = sum(ten_minute_events, ARRAY_SIZE(ten_minute_events));
+      ten_minute_events[ten_minute_event] =
+          sum(minute_events, ARRAY_SIZE(minute_events));
+      events.raw.last_10m =
+          sum(ten_minute_events, ARRAY_SIZE(ten_minute_events));
       events.cpm.last_10m = (events.raw.last_10m + 5) / 10;
       fix_cpm(events.cpm.last_10m);
       ten_minute_event++;
-      if( ten_minute_event == ARRAY_SIZE(ten_minute_events) ) {
+      if (ten_minute_event == ARRAY_SIZE(ten_minute_events)) {
         ten_minute_event = 0;
-        hour_events[hour_event] = sum(ten_minute_events, ARRAY_SIZE(ten_minute_events));
+        hour_events[hour_event] =
+            sum(ten_minute_events, ARRAY_SIZE(ten_minute_events));
         events.raw.last_1h = sum(hour_events, ARRAY_SIZE(hour_events));
         events.cpm.last_1h = (events.raw.last_1h + 30) / 60;
         fix_cpm(events.cpm.last_1h);
         hour_event++;
-        if(hour_event == ARRAY_SIZE(hour_events) ) {
+        if (hour_event == ARRAY_SIZE(hour_events)) {
           hour_event = 0;
           day_events[day_event] = sum(hour_events, ARRAY_SIZE(hour_events));
           events.raw.last_1d = sum(day_events, ARRAY_SIZE(day_events));
           events.cpm.last_1d = (events.raw.last_1d + (12 * 60)) / (24 * 60);
           fix_cpm(events.cpm.last_1d);
           day_event++;
-          if( day_event == ARRAY_SIZE(day_events) ) {
+          if (day_event == ARRAY_SIZE(day_events)) {
             day_event = 0;
           }
         }
@@ -339,18 +334,21 @@ void on_interval_elapsed( uint32_t interval, uint32_t counts ) {
 
   post_data();
 
-  syslog.logf(LOG_INFO, "Events CPM: 5s=%2u,  1m=%2u,  10m=%2u,  1h=%2u,  1d=%2u,  RAW: 5s=%2u,  1m=%2u,  10m=%3u,  1h=%4u,  1d=%5u",
-              events.cpm.last_5s, events.cpm.last_1m, events.cpm.last_10m, events.cpm.last_1h, events.cpm.last_1d,
-              events.raw.last_5s, events.raw.last_1m, events.raw.last_10m, events.raw.last_1h, events.raw.last_1d);
+  syslog.logf(LOG_INFO,
+              "Events CPM: 5s=%2u,  1m=%2u,  10m=%2u,  1h=%2u,  1d=%2u,  RAW: "
+              "5s=%2u,  1m=%2u,  10m=%3u,  1h=%4u,  1d=%5u",
+              events.cpm.last_5s, events.cpm.last_1m, events.cpm.last_10m,
+              events.cpm.last_1h, events.cpm.last_1d, events.raw.last_5s,
+              events.raw.last_1m, events.raw.last_10m, events.raw.last_1h,
+              events.raw.last_1d);
 }
-
 
 void check_events() {
   static const uint32_t counter_interval = 5000; // ms to accumulate irq events
 
   uint32_t now = millis();
   uint32_t elapsed = now - last_counter_reset;
-  if( elapsed >= counter_interval ) {
+  if (elapsed >= counter_interval) {
     uint32_t events = counter_events;
 
     counter_events = 0;
@@ -360,7 +358,6 @@ void check_events() {
   }
 }
 
-
 void breathe() {
   static uint32_t start = 0;
   static uint32_t max_duty = PWMRANGE / 2; // max brightness
@@ -368,29 +365,27 @@ void breathe() {
 
   uint32_t now = millis();
   uint32_t elapsed = now - start;
-  if( elapsed > breathe_interval ) {
+  if (elapsed > breathe_interval) {
     start = now;
     elapsed -= breathe_interval;
   }
-  
+
   uint32_t duty = max_duty * elapsed * 2 / breathe_interval;
-  if( duty > max_duty ) {
+  if (duty > max_duty) {
     duty = 2 * max_duty - duty;
   }
 
   duty = duty * duty / max_duty;
 
-  if (duty != prev_duty)
-  {
+  if (duty != prev_duty) {
     prev_duty = duty;
     analogWrite(LED_BUILTIN, PWMRANGE - duty);
   }
 }
 
-
 void loop() {
   ntp.update();
-  if( check_ntptime() ) {
+  if (check_ntptime()) {
     breathe();
   }
   check_events();
