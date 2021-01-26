@@ -21,10 +21,6 @@
 #define LED_ON LOW
 #define LED_OFF HIGH
 
-#define IRQ_PIN D2
-
-#define IDLE_CPM 25
-
 #define WEBSERVER_PORT 80
 
 ESP8266WebServer web_server(WEBSERVER_PORT);
@@ -72,10 +68,10 @@ ICACHE_RAM_ATTR void event() { counter_events++; }
 void post_data() {
   static const char uri[] = "/write?db=" INFLUX_DB "&precision=s";
 
-  char fmt[] = "events,dev=" HOSTNAME ",ver=%s count_5s=%u,cpm=%u\n";
+  char fmt[] = "events,dev=" HOSTNAME ",ver=%s count_5s=%u,cpm=%u,usv_per_h=%.3f\n";
   char msg[sizeof(fmt) + 20 + 2 * 10];
   snprintf(msg, sizeof(msg), fmt, VERSION, events.raw.last_5s,
-           events.cpm.last_1m);
+           events.cpm.last_1m, (double)events.cpm.last_1m / CONVERSION_INDEX);
   http.begin(client, INFLUX_SERVER, INFLUX_PORT, uri);
   http.setUserAgent(PROGNAME);
   influx_status = http.POST(msg);
@@ -92,13 +88,14 @@ void post_data() {
 
 // Define web pages for update, reset or for event infos
 void setup_webserver() {
-  web_server.on("/events", HTTP_POST, []() {
+  web_server.on("/events", []() {
     static const char fmt[] = "{\n"
                               " \"meta\": {\n"
                               "  \"device\": \"" HOSTNAME "\",\n"
                               "  \"program\": \"" PROGNAME "\",\n"
                               "  \"version\": \"" VERSION "\",\n"
                               "  \"cpm_idle\": %u,\n"
+                              "  \"conv_index\": %u,\n"
                               "  \"started\": \"%s\",\n"
                               "  \"measured\": \"%s\"\n"
                               " },\n"
@@ -115,24 +112,42 @@ void setup_webserver() {
                               "  \"10m\": %u,\n"
                               "  \"1h\": %u,\n"
                               "  \"1d\": %u\n"
+                              " },\n"
+                              " \"mSv/y\": {\n"
+                              "  \"5s\": %.3f,\n"
+                              "  \"1m\": %.3f,\n"
+                              "  \"10m\": %.3f,\n"
+                              "  \"1h\": %.3f,\n"
+                              "  \"1d\": %.3f\n"
                               " }\n"
                               "}\n";
     static char msg[sizeof(fmt) + 20 + 6 * 10];
     static char iso_time[30];
-    time_t now = time(NULL);
-    strftime(iso_time, sizeof(iso_time), "%FT%T%Z", localtime(&now));
-    snprintf(msg, sizeof(msg), fmt, IDLE_CPM, start_time, iso_time,
-             events.raw.last_5s, events.raw.last_1m, events.raw.last_10m,
-             events.raw.last_1h, events.raw.last_1d, events.cpm.last_5s,
-             events.cpm.last_1m, events.cpm.last_10m, events.cpm.last_1h,
-             events.cpm.last_1d);
+    strftime(iso_time, sizeof(iso_time), "%FT%T%Z", localtime(&events.measured));
+    snprintf(msg, sizeof(msg), fmt, IDLE_CPM, CONVERSION_INDEX, start_time,
+             iso_time, events.raw.last_5s, events.raw.last_1m,
+             events.raw.last_10m, events.raw.last_1h, events.raw.last_1d,
+             events.cpm.last_5s, events.cpm.last_1m, events.cpm.last_10m,
+             events.cpm.last_1h, events.cpm.last_1d,
+             365.25 * 24 * events.cpm.last_5s / CONVERSION_INDEX / 1000,
+             365.25 * 24 * events.cpm.last_1m / CONVERSION_INDEX / 1000,
+             365.25 * 24 * events.cpm.last_10m / CONVERSION_INDEX / 1000,
+             365.25 * 24 * events.cpm.last_1h / CONVERSION_INDEX / 1000,
+             365.25 * 24 * events.cpm.last_1d / CONVERSION_INDEX / 1000);
     web_server.send(200, "application/json", msg);
   });
 
   // Call this page to reset the ESP
   web_server.on("/reset", HTTP_POST, []() {
     syslog.log(LOG_NOTICE, "RESET");
-    web_server.send(200, "text/plain", "Resetting");
+    web_server.send(200, "text/html", 
+      "<html>\n"
+      " <head>\n"
+      "  <title>" PROGNAME " v" VERSION "</title>\n"
+      "  <meta http-equiv=\"refresh\" content=\"7; url=/\"> \n"
+      " </head>\n"
+      " <body>Resetting...</body>\n"
+      "</html>\n");
     delay(200);
     ESP.restart();
   });
@@ -140,19 +155,22 @@ void setup_webserver() {
   // Standard page
   static const char fmt[] =
       "<html>\n"
-      " <head><title>" PROGNAME " v" VERSION "</title></head>\n"
+      " <head>\n"
+      "  <title>" PROGNAME " v" VERSION "</title>\n"
+      "  <meta http-equiv=\"expires\" content=\"5\">\n"
+      " </head>\n"
       " <body>\n"
-      "  <h1> " PROGNAME " v" VERSION "</h1>\n"
+      "  <h1>" PROGNAME " v" VERSION "</h1>\n"
       "  <table><tr>\n"
-      "   <td><form action=\"events\" method=\"post\">"
-      "    <input type=\"submit\" name=\"events\" value=\"Events as JSON\" />"
+      "   <td><form action=\"events\">\n"
+      "    <input type=\"submit\" name=\"events\" value=\"Events as JSON\" />\n"
       "   </form></td>\n"
-      "   <td><form action=\"reset\" method=\"post\">"
-      "    <input type=\"submit\" name=\"reset\" value=\"Reset\" />"
+      "   <td><form action=\"reset\" method=\"post\">\n"
+      "    <input type=\"submit\" name=\"reset\" value=\"Reset\" />\n"
       "   </form></td>\n"
       "  </tr></table>\n"
-      "  <div>Post firmware image to /update\n<div>"
-      "  <div>Influx status: %d\n<div>"
+      "  <div>Post firmware image to /update<div>\n"
+      "  <div>Influx status: %d<div>\n"
       " </body>\n"
       "</html>\n";
   static char page[sizeof(fmt) + 10] = "";
@@ -224,7 +242,7 @@ void setup() {
   setup_webserver();
 
   last_counter_reset = millis();
-  attachInterrupt(digitalPinToInterrupt(D2), event, FALLING);
+  attachInterrupt(digitalPinToInterrupt(EVENT_PIN), event, FALLING);
 }
 
 bool check_ntptime() {
