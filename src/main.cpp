@@ -278,6 +278,8 @@ void on_interval_elapsed(uint32_t interval, uint32_t counts) {
   static uint32_t day_events[24];
   static size_t day_event = 0;
 
+  bool time_to_log = false;
+
   events.measured = time(NULL);
   events.raw.last_5s = counts;
   events.cpm.last_5s = (uint32_t)((uint64_t)counts * 60000 / interval);
@@ -285,6 +287,8 @@ void on_interval_elapsed(uint32_t interval, uint32_t counts) {
 
   if (first) {
     first = false;
+    time_to_log = true;
+
     for (size_t i = 0; i < ARRAY_SIZE(minute_events); i++) {
       minute_events[i] = counts;
     }
@@ -329,6 +333,7 @@ void on_interval_elapsed(uint32_t interval, uint32_t counts) {
       events.cpm.last_10m = (events.raw.last_10m + 5) / 10;
       fix_cpm(events.cpm.last_10m);
       ten_minute_event++;
+      time_to_log = true; // log once every 10 minutes
       if (ten_minute_event == ARRAY_SIZE(ten_minute_events)) {
         ten_minute_event = 0;
         hour_events[hour_event] =
@@ -352,15 +357,18 @@ void on_interval_elapsed(uint32_t interval, uint32_t counts) {
     }
   }
 
-  post_data();
+  if (time_to_log) {
+    syslog.logf(
+        LOG_INFO,
+        "Events CPM: 5s=%2u,  1m=%2u,  10m=%2u,  1h=%2u,  1d=%2u,  RAW: "
+        "5s=%2u,  1m=%2u,  10m=%3u,  1h=%4u,  1d=%5u",
+        events.cpm.last_5s, events.cpm.last_1m, events.cpm.last_10m,
+        events.cpm.last_1h, events.cpm.last_1d, events.raw.last_5s,
+        events.raw.last_1m, events.raw.last_10m, events.raw.last_1h,
+        events.raw.last_1d);
+  }
 
-  syslog.logf(LOG_INFO,
-              "Events CPM: 5s=%2u,  1m=%2u,  10m=%2u,  1h=%2u,  1d=%2u,  RAW: "
-              "5s=%2u,  1m=%2u,  10m=%3u,  1h=%4u,  1d=%5u",
-              events.cpm.last_5s, events.cpm.last_1m, events.cpm.last_10m,
-              events.cpm.last_1h, events.cpm.last_1d, events.raw.last_5s,
-              events.raw.last_1m, events.raw.last_10m, events.raw.last_1h,
-              events.raw.last_1d);
+  post_data();
 }
 
 void check_events() {
