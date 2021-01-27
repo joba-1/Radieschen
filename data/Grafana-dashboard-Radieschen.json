@@ -111,7 +111,7 @@
       "fill": 1,
       "fillGradient": 0,
       "gridPos": {
-        "h": 12,
+        "h": 11,
         "w": 24,
         "x": 0,
         "y": 0
@@ -368,7 +368,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 11
       },
       "hiddenSeries": false,
       "id": 3,
@@ -614,7 +614,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 23
       },
       "hiddenSeries": false,
       "id": 4,
@@ -835,6 +835,7 @@
       "aliasColors": {
         "Radieschen1": "dark-red",
         "Radieschen1-10m": "light-red",
+        "Radieschen1-10x": "light-red",
         "Radieschen1-1d": "super-light-green",
         "Radieschen1-1h": "super-light-green",
         "Radieschen1-60m": "super-light-green"
@@ -858,7 +859,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 35
       },
       "hiddenSeries": false,
       "id": 5,
@@ -1033,10 +1034,10 @@
         }
       ],
       "thresholds": [],
-      "timeFrom": "1y",
+      "timeFrom": "1M",
       "timeRegions": [],
       "timeShift": null,
-      "title": "Radiation 1y",
+      "title": "Radiation 1M",
       "tooltip": {
         "shared": true,
         "sort": 0,
@@ -1104,5 +1105,5 @@
   "timezone": "",
   "title": "Radieschen",
   "uid": "j58aajfMk",
-  "version": 35
+  "version": 38
 }
